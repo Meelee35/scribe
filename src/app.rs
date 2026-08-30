@@ -6,6 +6,8 @@ use ratatui::layout::Spacing;
 use ratatui::prelude::*;
 use ratatui::symbols::merge::MergeStrategy;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Padding, Paragraph, Wrap};
+use ratatui_textarea::{CursorMove, TextArea, WrapMode};
+use crate::app::NotePanes::Todo;
 use crate::data;
 
 #[derive(Default)]
@@ -37,11 +39,27 @@ pub enum NotePanes {
 pub struct NoteScreenState {
     edit: bool,
     focused: NotePanes,
-    selected_todo: usize,
     name: String,
-    body: String,
+    body: TextArea<'static>,
     todos: Vec<data::Todo>,
-    list_state: ListState
+    list_state: ListState,
+    todo_input: Option<TodoInput>
+}
+
+enum TodoInput {
+    New(TextArea<'static>),
+    Edit(TodoEdit),
+}
+
+struct TodoEdit {
+    text_area: TextArea<'static>,
+    index: usize,
+}
+
+impl Default for TodoInput {
+    fn default() -> Self {
+        TodoInput::New(TextArea::default())
+    }
 }
 
 impl Default for Screen {
@@ -174,7 +192,7 @@ impl App {
             },
             Screen::Note(state) => {
                 if state.edit {
-                    Self::handle_note_edit_keys(key_event)
+                    Self::handle_note_edit_keys(key_event, state);
                 } else {
                     let sorted: Vec<usize> = (0..state.todos.len())
                         .filter(|&i| state.todos[i].pinned)
@@ -212,8 +230,43 @@ impl App {
         None
     }
 
-    fn handle_note_edit_keys(key_event: KeyEvent) {
-
+    fn handle_note_edit_keys(key_event: KeyEvent, state: &mut NoteScreenState) -> Option<Screen> {
+        match key_event.code {
+            KeyCode::Char('e') if key_event.modifiers.contains(KeyModifiers::CONTROL) => { Self::toggle_edit_mode(state); None },
+            KeyCode::Tab => { Self::toggle_edit_focus(state); None },
+            _ => {
+                if let NotePanes::Note = state.focused {
+                    state.body.input(key_event);
+                } else {
+                    match key_event.code {
+                        KeyCode::Char('j') | KeyCode::Down => state.select_down(),
+                        KeyCode::Char('k') | KeyCode::Up => state.select_up(),
+                        KeyCode::Enter => {
+                            if let Some(TodoInput::Edit(edit_state)) = state.todo_input.take() {
+                                state.todos[edit_state.index].text = edit_state.text_area.lines()[0].clone();
+                                if edit_state.text_area.lines()[0].is_empty() {
+                                    state.todos.remove(edit_state.index);
+                                } else {
+                                    state.todos[edit_state.index].text = edit_state.text_area.lines()[0].clone();
+                                }
+                            }
+                        },
+                        _ => {
+                            if let Some(TodoInput::Edit(edit_state)) = &mut state.todo_input {
+                                edit_state.text_area.input(key_event);
+                            } else if let Some(index) = state.list_state.selected() {
+                                let mut textarea = TextArea::from([state.todos[index].text.as_str()]);
+                                textarea.move_cursor(CursorMove::End);
+                                textarea.set_cursor_line_style(Style::default());
+                                textarea.input(key_event);
+                                state.todo_input = Some(TodoInput::Edit(TodoEdit { text_area: textarea, index }));
+                            }
+                        }
+                    }
+                }
+                None
+            },
+        }
     }
 
     fn handle_note_view_keys(key_event: KeyEvent, state: &mut NoteScreenState) -> Option<NoteViewAction> {
@@ -222,8 +275,36 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => { state.select_up(); None }
             KeyCode::Char(' ') | KeyCode::Enter => state.list_state.selected().map(NoteViewAction::ToggleDone),
             KeyCode::Char('p') if key_event.modifiers.contains(KeyModifiers::CONTROL) => state.list_state.selected().map(NoteViewAction::TogglePin),
+            KeyCode::Char('e') if key_event.modifiers.contains(KeyModifiers::CONTROL) => { Self::toggle_edit_mode(state); None }
 
             _ => None
+        }
+    }
+
+    fn toggle_edit_mode(state: &mut NoteScreenState) {
+        state.edit = !state.edit;
+
+        if !state.edit{
+            state.body.set_cursor_style(Style::default());
+        } else if let NotePanes::Note = state.focused {
+            state.body.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
+        } else {
+            state.body.set_cursor_style(Style::default());
+        }
+    }
+
+    fn toggle_edit_focus(state: &mut NoteScreenState) {
+        state.focused = match state.focused {
+            NotePanes::Note => NotePanes::Todo,
+            NotePanes::Todo => NotePanes::Note
+        };
+
+        if !state.edit{
+            state.body.set_cursor_style(Style::default());
+        } else if let NotePanes::Note = state.focused {
+            state.body.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
+        } else {
+            state.body.set_cursor_style(Style::default());
         }
     }
 
@@ -232,7 +313,7 @@ impl App {
             Screen::Note(ref mut note_screen) => {
                 self.app_data.notes = self.app_data.notes.iter().map(|n| {
                     if n.name == note_screen.name {
-                        data::Note { body: note_screen.body.clone(), todos: note_screen.todos.clone(), ..n.clone() }
+                        data::Note { body: note_screen.body.lines().join("\n"), todos: note_screen.todos.clone(), ..n.clone() }
                     } else {
                         n.clone()
                     }
@@ -263,8 +344,12 @@ impl App {
             .cloned()
             .unwrap_or_default();
 
-        let body = note_data.body;
+        let mut body = TextArea::from(note_data.body.lines().collect::<Vec<&str>>());
         let todos = note_data.todos;
+
+        body.set_wrap_mode(WrapMode::Word);
+        body.set_cursor_style(Style::default());
+        body.set_cursor_line_style(Style::default());
 
         Screen::Note(NoteScreenState {
             edit,
@@ -282,7 +367,8 @@ impl App {
         let block = Block::bordered()
             .title(title.centered())
             .title_bottom(instructions.centered())
-            .borders(Borders::ALL);
+            .borders(Borders::ALL)
+            .padding(Padding::horizontal(1));
 
         let items: Vec<ListItem> = app_data.notes
             .iter()
@@ -308,7 +394,32 @@ impl App {
             .spacing(Spacing::Overlap(1))
             .areas(area);
 
-        let title = Line::from(format!(" {} ", state.name));
+        let [mut todo_list_area, todo_input_area] = Layout::vertical([
+            Constraint::Fill(1),
+            Constraint::Length(3),
+        ]).areas(right);
+
+        let mut note_pane_title = Line::from(format!(" {} ", state.name));
+        let mut todo_pane_title = Line::from(" Todo ");
+
+        if state.edit {
+            match state.focused {
+                NotePanes::Note => note_pane_title = Line::from(" [EDITING] "),
+                Todo => todo_pane_title = Line::from(" [EDITING] "),
+            }
+        }
+
+        let edit_block = Block::default()
+            .title(Line::from(" Type todo text ").centered())
+            .borders(Borders::ALL);
+
+        if let Some(TodoInput::Edit(input_state)) = &mut state.todo_input {
+            input_state.text_area.set_block(edit_block);
+            input_state.text_area.render(todo_input_area, buf);
+        } else {
+            todo_list_area = right;
+        }
+
         let instructions = Line::from(" ↑↓ Navigate | ↵ Toggle | ^P Pin | ^E Edit | ^X Back ");
 
         let instruction_block = Block::default()
@@ -317,20 +428,18 @@ impl App {
             .merge_borders(MergeStrategy::Replace);
 
         let note_block = Block::bordered()
-            .title(title.centered())
+            .title(note_pane_title.centered())
             .borders(Borders::ALL)
             .merge_borders(MergeStrategy::Exact)
             .padding(Padding::horizontal(1));
 
         let todo_block = Block::bordered()
-            .title(Line::from(" Todo ").centered())
+            .title(todo_pane_title.centered())
             .borders(Borders::ALL)
             .merge_borders(MergeStrategy::Exact)
             .padding(Padding::right(1));
 
-        let body = Paragraph::new(state.body.clone())
-            .wrap(Wrap { trim: false })
-            .block(note_block);
+        state.body.set_block(note_block);
 
         let items: Vec<ListItem> = state.todos.iter()
             .filter(|t| t.pinned)
@@ -355,7 +464,7 @@ impl App {
             .highlight_style(Modifier::REVERSED);
 
         instruction_block.render(area, buf);
-        body.render(left, buf);
-        StatefulWidget::render(list, right, buf, &mut state.list_state);
+        state.body.render(left, buf);
+        StatefulWidget::render(list, todo_list_area, buf, &mut state.list_state);
     }
 }
