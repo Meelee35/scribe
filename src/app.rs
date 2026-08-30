@@ -2,8 +2,10 @@ use std::any;
 use crossterm::event;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::DefaultTerminal;
+use ratatui::layout::Spacing;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::symbols::merge::MergeStrategy;
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Padding, Paragraph, Wrap};
 use crate::data;
 
 #[derive(Default)]
@@ -37,7 +39,9 @@ pub struct NoteScreenState {
     focused: NotePanes,
     selected_todo: usize,
     name: String,
-    body: String
+    body: String,
+    todos: Vec<data::Todo>,
+    list_state: ListState
 }
 
 impl Default for Screen {
@@ -155,7 +159,7 @@ impl App {
             KeyCode::Enter => {
                 if let Some(note_name) = state.selected_note_name(&app_data.notes) {
                     state.search.clear();
-                    return Some(Self::note_screen(note_name, false))
+                    return Some(Self::note_screen(note_name, app_data, false))
                 }
             }
             _ => {}
@@ -192,10 +196,20 @@ impl App {
         Screen::Main(MainScreenState::new())
     }
 
-    fn note_screen(note: String, edit: bool) -> Screen {
+    fn note_screen(note: String, app_data: &data::Data, edit: bool) -> Screen {
+        let note_data = app_data.notes.iter()
+            .find(|n| n.name == note)
+            .cloned()
+            .unwrap_or_default();
+
+        let body = note_data.body;
+        let todos = note_data.todos;
+
         Screen::Note(NoteScreenState {
             edit,
             name: note,
+            body,
+            todos,
             ..NoteScreenState::default()
         })
     }
@@ -221,8 +235,7 @@ impl App {
 
         let list = List::new(items)
             .block(block)
-            .highlight_style(Modifier::REVERSED)
-            .highlight_symbol("> ");
+            .highlight_style(Modifier::REVERSED);
 
         let [_, center, _] = Layout::horizontal([
             Constraint::Percentage(20),
@@ -234,72 +247,52 @@ impl App {
     }
 
     fn render_note_screen(area: Rect, buf: &mut Buffer, state: &mut NoteScreenState, app_data: &data::Data) {
-        let title = Line::from(state.name.clone());
+        // inner wasn't rendering the title how i liked, so split like this instead
+        let [left, right] = Layout::horizontal([Constraint::Fill(1); 2])
+            .spacing(Spacing::Overlap(1))
+            .areas(area);
 
-        let outer_block = Block::bordered()
-            .title(title.centered())
-            .borders(Borders::TOP);
-
-        // inner wasn't rendering the title how i liked, so split vertically instead
-        let [title_area, panes_area] = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Fill(1),
-        ]).areas(area);
-
-        let layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(vec![
-                Constraint::Percentage(50),
-                Constraint::Percentage(50),
-            ])
-            .split(panes_area);
+        let title = Line::from(format!(" {} ", state.name));
 
         let note_block = Block::bordered()
-            .title(" Notes ")
-            .borders(Borders::ALL);
+            .title(title.centered())
+            .borders(Borders::ALL)
+            .merge_borders(MergeStrategy::Exact)
+            .padding(Padding::horizontal(1));
 
         let todo_block = Block::bordered()
-            .title(" Todo ")
-            .borders(Borders::ALL);
+            .title(Line::from(" Todo ").centered())
+            .borders(Borders::ALL)
+            .merge_borders(MergeStrategy::Exact)
+            .padding(Padding::right(1));
 
-        outer_block.render(title_area, buf);
-        note_block.render(layout[0], buf);
-        todo_block.render(layout[1], buf);
+        let body = Paragraph::new(state.body.clone())
+            .wrap(Wrap { trim: false })
+            .block(note_block);
+
+        let items: Vec<ListItem> = state.todos.iter()
+            .filter(|t| t.pinned)
+            .chain(state.todos.iter().filter(|t| !t.pinned))
+            .map(|todo| {
+                let temp = if todo.done {
+                    format!("[✓] {}", todo.text)
+                } else {
+                    format!("[ ] {}", todo.text)
+                };
+                if todo.pinned {
+                    format!("*{}", temp)
+                } else {
+                    format!(" {}", temp)
+                }
+            })
+            .map(|text| ListItem::new(text))
+            .collect();
+
+        let list = List::new(items)
+            .block(todo_block)
+            .highlight_style(Modifier::REVERSED);
+
+        body.render(left, buf);
+        StatefulWidget::render(list, right, buf, &mut state.list_state);
     }
 }
-
-// the ratatui guide was my reference for creating most of the UI here, so thats why this is here.
-
-// impl Widget for &App {
-//     fn render(self, area: Rect, buf: &mut Buffer) {
-//
-//         match self.screen {
-//             Screen::Main(ref main_screen) => self.render_main_screen(area, buf),
-//             Screen::Note(ref note_screen) => todo!()
-//         }
-
-        // let title = Line::from(" Counter App Tutorial ".bold());
-        // let instructions = Line::from(vec![
-        //     " Decrement ".into(),
-        //     "<Left>".blue().bold(),
-        //     " Increment ".into(),
-        //     "<Right>".blue().bold(),
-        //     " Quit ".into(),
-        //     "<Q> ".blue().bold(),
-        // ]);
-        // let block = Block::bordered()
-        //     .title(title.centered())
-        //     .title_bottom(instructions.centered())
-        //     .border_set(border::THICK);
-        //
-        // let counter_text = Text::from(vec![Line::from(vec![
-        //     "Value: ".into(),
-        //     self.counter.to_string().yellow(),
-        // ])]);
-        //
-        // Paragraph::new(counter_text)
-        //     .centered()
-        //     .block(block)
-        //     .render(area, buf);
-//     }
-// }

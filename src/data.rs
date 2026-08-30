@@ -11,14 +11,14 @@ pub struct Data {
     pub notes: Vec<Note>
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Note {
     pub name: String,
     pub body: String,
     pub todos: Vec<Todo>
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Todo {
     pub text: String,
     pub done: bool,
