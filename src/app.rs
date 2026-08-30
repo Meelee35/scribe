@@ -50,6 +50,36 @@ impl Default for Screen {
     }
 }
 
+enum NoteViewAction {
+    ToggleDone(usize),
+    TogglePin(usize),
+}
+
+impl NoteScreenState {
+    pub fn new() -> Self {
+        let mut list_state = ListState::default();
+        list_state.select(Some(0));
+
+        Self {
+            list_state,
+            ..Default::default()
+        }
+    }
+    pub fn selected_todo(&self, todos: &[data::Todo]) -> Option<data::Todo> {
+        let index = self.list_state.selected()?;
+
+        todos.get(index).map(|todo| todo.clone())
+    }
+
+    pub fn select_up(&mut self) {
+        self.list_state.select_previous();
+    }
+
+    pub fn select_down(&mut self) {
+        self.list_state.select_next();
+    }
+}
+
 impl MainScreenState {
     pub fn new() -> Self {
         let mut list_state = ListState::default();
@@ -120,16 +150,16 @@ impl App {
     fn handle_events(&mut self) -> anyhow::Result<()> {
         match event::read()? {
             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                self.handle_key_event(key_event)
+                self.handle_key_event(key_event)?
             }
             _ => {}
         };
         Ok(())
     }
 
-    fn handle_key_event(&mut self, key_event: KeyEvent) {
+    fn handle_key_event(&mut self, key_event: KeyEvent) -> anyhow::Result<()> {
         match key_event.code {
-            KeyCode::Char('x') if key_event.modifiers.contains(KeyModifiers::CONTROL) => self.exit(),
+            KeyCode::Char('x') if key_event.modifiers.contains(KeyModifiers::CONTROL) => self.exit()?,
             _ => {}
         }
 
@@ -146,17 +176,32 @@ impl App {
                 if state.edit {
                     Self::handle_note_edit_keys(key_event)
                 } else {
-                    Self::handle_note_view_keys(key_event)
+                    let sorted: Vec<usize> = (0..state.todos.len())
+                        .filter(|&i| state.todos[i].pinned)
+                        .chain((0..state.todos.len()).filter(|&i| !state.todos[i].pinned))
+                        .collect();
+
+                    if let Some(action) = Self::handle_note_view_keys(key_event, state) {
+                        if let Some(&real_index) = sorted.get(match action {
+                            NoteViewAction::ToggleDone(i) | NoteViewAction::TogglePin(i) => i,
+                        }) {
+                            match action {
+                                NoteViewAction::ToggleDone(_) => state.todos[real_index].done = !state.todos[real_index].done,
+                                NoteViewAction::TogglePin(_) => state.todos[real_index].pinned = !state.todos[real_index].pinned,
+                            }
+                        }
+                    }
                 }
             }
         }
+        Ok(())
     }
 
     fn handle_main_keys(key_event: KeyEvent, state: &mut MainScreenState, app_data: &data::Data) -> Option<Screen> {
         match key_event.code {
             KeyCode::Char('j') | KeyCode::Down => state.select_down(),
             KeyCode::Char('k') | KeyCode::Up => state.select_up(),
-            KeyCode::Enter => {
+            KeyCode::Enter | KeyCode::Char(' ') => {
                 if let Some(note_name) = state.selected_note_name(&app_data.notes) {
                     state.search.clear();
                     return Some(Self::note_screen(note_name, app_data, false))
@@ -171,13 +216,27 @@ impl App {
 
     }
 
-    fn handle_note_view_keys(key_event: KeyEvent) {
+    fn handle_note_view_keys(key_event: KeyEvent, state: &mut NoteScreenState) -> Option<NoteViewAction> {
+        match key_event.code {
+            KeyCode::Char('j') | KeyCode::Down => { state.select_down(); None }
+            KeyCode::Char('k') | KeyCode::Up => { state.select_up(); None }
+            KeyCode::Char(' ') | KeyCode::Enter => state.list_state.selected().map(NoteViewAction::ToggleDone),
+            KeyCode::Char('p') if key_event.modifiers.contains(KeyModifiers::CONTROL) => state.list_state.selected().map(NoteViewAction::TogglePin),
 
+            _ => None
+        }
     }
 
-    fn exit(&mut self) {
+    fn exit(&mut self) -> anyhow::Result<()> {
         match self.screen {
             Screen::Note(ref mut note_screen) => {
+                self.app_data.notes = self.app_data.notes.iter().map(|n| {
+                    if n.name == note_screen.name {
+                        data::Note { body: note_screen.body.clone(), todos: note_screen.todos.clone(), ..n.clone() }
+                    } else {
+                        n.clone()
+                    }
+                }).collect();
                 if note_screen.edit {
                     note_screen.edit = false;
                 } else {
@@ -190,6 +249,8 @@ impl App {
             },
             Screen::Main(_) => self.exit = true
         }
+        data::save(&mut self.app_data)?;
+        Ok(())
     }
 
     fn main_screen() -> Screen {
@@ -210,18 +271,13 @@ impl App {
             name: note,
             body,
             todos,
-            ..NoteScreenState::default()
+            ..NoteScreenState::new()
         })
     }
 
     fn render_main_screen(area: Rect, buf: &mut Buffer, state: &mut MainScreenState, app_data: &data::Data) {
         let title = Line::from(" Scribe ".bold());
-        let instructions = Line::from(vec![
-            " ^S Search |".into(),
-            " ↑↓ Navigate |".into(),
-            " ↵ Open |".into(),
-            " ^X Quit ".into(),
-        ]);
+        let instructions = Line::from(" ^S Search | ↑↓ Navigate | ↵ Open | ^X Quit ");
 
         let block = Block::bordered()
             .title(title.centered())
@@ -253,16 +309,22 @@ impl App {
             .areas(area);
 
         let title = Line::from(format!(" {} ", state.name));
+        let instructions = Line::from(" ↑↓ Navigate | ↵ Toggle | ^P Pin | ^E Edit | ^X Back ");
+
+        let instruction_block = Block::default()
+            .title_bottom(instructions.centered())
+            .borders(Borders::BOTTOM)
+            .merge_borders(MergeStrategy::Exact);
 
         let note_block = Block::bordered()
             .title(title.centered())
-            .borders(Borders::ALL)
+            .borders(Borders::TOP | Borders::RIGHT | Borders::LEFT)
             .merge_borders(MergeStrategy::Exact)
             .padding(Padding::horizontal(1));
 
         let todo_block = Block::bordered()
             .title(Line::from(" Todo ").centered())
-            .borders(Borders::ALL)
+            .borders(Borders::TOP | Borders::RIGHT | Borders::LEFT)
             .merge_borders(MergeStrategy::Exact)
             .padding(Padding::right(1));
 
@@ -293,6 +355,7 @@ impl App {
             .highlight_style(Modifier::REVERSED);
 
         body.render(left, buf);
+        instruction_block.render(area, buf);
         StatefulWidget::render(list, right, buf, &mut state.list_state);
     }
 }
