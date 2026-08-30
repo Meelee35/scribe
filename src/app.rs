@@ -313,18 +313,18 @@ impl App {
 
         let instruction_block = Block::default()
             .title_bottom(instructions.centered())
-            .borders(Borders::BOTTOM)
-            .merge_borders(MergeStrategy::Exact);
+            .borders(Borders::ALL)
+            .merge_borders(MergeStrategy::Replace);
 
         let note_block = Block::bordered()
             .title(title.centered())
-            .borders(Borders::TOP | Borders::RIGHT | Borders::LEFT)
+            .borders(Borders::ALL)
             .merge_borders(MergeStrategy::Exact)
             .padding(Padding::horizontal(1));
 
         let todo_block = Block::bordered()
             .title(Line::from(" Todo ").centered())
-            .borders(Borders::TOP | Borders::RIGHT | Borders::LEFT)
+            .borders(Borders::ALL)
             .merge_borders(MergeStrategy::Exact)
             .padding(Padding::right(1));
 
@@ -354,8 +354,8 @@ impl App {
             .block(todo_block)
             .highlight_style(Modifier::REVERSED);
 
-        body.render(left, buf);
         instruction_block.render(area, buf);
+        body.render(left, buf);
         StatefulWidget::render(list, right, buf, &mut state.list_state);
     }
 }
