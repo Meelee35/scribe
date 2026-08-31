@@ -187,10 +187,7 @@ impl App {
                 if state.edit {
                     Self::handle_note_edit_keys(key_event, state, &mut self.app_data);
                 } else {
-                    let sorted: Vec<usize> = (0..state.todos.len())
-                        .filter(|&i| state.todos[i].pinned)
-                        .chain((0..state.todos.len()).filter(|&i| !state.todos[i].pinned))
-                        .collect();
+                    let sorted = sorted_todo_indices(&state.todos);
 
                     if let Some(action) = Self::handle_note_view_keys(key_event, state, &mut self.app_data) {
                         if let Some(&real_index) = sorted.get(match action {
