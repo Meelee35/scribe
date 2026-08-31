@@ -18,7 +18,7 @@ pub struct Note {
     pub todos: Vec<Todo>
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Todo {
     pub text: String,
     pub done: bool,

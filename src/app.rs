@@ -45,7 +45,7 @@ pub struct NoteScreenState {
 }
 
 enum TodoInput {
-    New,
+    New(TextArea<'static>),
     Edit(TodoEdit),
 }
 
@@ -56,7 +56,7 @@ struct TodoEdit {
 
 impl Default for TodoInput {
     fn default() -> Self {
-        TodoInput::New
+        TodoInput::New(TextArea::default())
     }
 }
 
@@ -245,20 +245,41 @@ impl App {
                             }
                         },
                         KeyCode::Enter => {
-                            if let Some(TodoInput::Edit(edit_state)) = state.todo_input.take() {
-                                state.todos[edit_state.index].text = edit_state.text_area.lines()[0].clone();
-                                if edit_state.text_area.lines()[0].is_empty() {
-                                    state.todos.remove(edit_state.index);
-                                } else {
-                                    state.todos[edit_state.index].text = edit_state.text_area.lines()[0].clone();
+                            if let Some(input) = state.todo_input.take() {
+                                match input {
+                                    TodoInput::Edit(edit_state) => {
+                                        let text = edit_state.text_area.lines()[0].clone();
+                                        if text.is_empty() {
+                                            state.todos.remove(edit_state.index);
+                                        } else {
+                                            state.todos[edit_state.index].text = text;
+                                        }
+                                    }
+                                    TodoInput::New(textarea) => {
+                                        let text = textarea.lines()[0].clone();
+                                        if !text.is_empty() {
+                                            state.todos.push(data::Todo {
+                                                text,
+                                                ..data::Todo::default()
+                                            });
+                                        }
+                                    }
                                 }
                             }
                         },
+                        KeyCode::Char('n') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                            let mut textarea = TextArea::default();
+                            textarea.move_cursor(CursorMove::End);
+                            textarea.set_cursor_line_style(Style::default());
+                            state.todo_input = Some(TodoInput::New(textarea));
+                        }
                         _ => {
                             let sorted = sorted_todo_indices(&state.todos);
 
                             if let Some(TodoInput::Edit(edit_state)) = &mut state.todo_input {
                                 edit_state.text_area.input(key_event);
+                            } else if let Some(TodoInput::New(textarea)) = &mut state.todo_input {
+                                textarea.input(key_event);
                             } else if let Some(display_index) = state.list_state.selected() {
                                 if let Some(&real_index) = sorted.get(display_index) {
                                     let mut textarea = TextArea::from([state.todos[real_index].text.as_str()]);
@@ -464,9 +485,18 @@ impl App {
             .title(Line::from(" Type todo text ").centered())
             .borders(Borders::ALL);
 
-        if state.edit && let Some(TodoInput::Edit(input_state)) = &mut state.todo_input {
-            input_state.text_area.set_block(edit_block);
-            input_state.text_area.render(todo_input_area, buf);
+        if state.edit {
+            let text_area = match &mut state.todo_input {
+                Some(TodoInput::Edit(input_state)) => Some(&mut input_state.text_area),
+                Some(TodoInput::New(textarea)) => Some(textarea),
+                None => None,
+            };
+            if let Some(textarea) = text_area {
+                textarea.set_block(edit_block);
+                textarea.render(todo_input_area, buf);
+            } else {
+                todo_list_area = right;
+            }
         } else {
             todo_list_area = right;
         }
