@@ -228,10 +228,15 @@ impl App {
         match key_event.code {
             KeyCode::Char('e') if key_event.modifiers.contains(KeyModifiers::CONTROL) => { Self::toggle_edit_mode(state, app_data).expect("rip"); None },
             KeyCode::Char('z') if key_event.modifiers.contains(KeyModifiers::CONTROL) => { Self::discard_edit_mode(state, app_data); None },
-            KeyCode::Tab => { Self::toggle_edit_focus(state); None },
+            KeyCode::Tab => {
+                Self::toggle_edit_focus(state);
+                None
+            },
             _ => {
                 if let NotePanes::Note = state.focused {
-                    state.body.input(key_event);
+                    if state.todo_input.is_none() {
+                        state.body.input(key_event);
+                    }
                 } else {
                     match key_event.code {
                         KeyCode::Char('j') | KeyCode::Down => state.select_down(),
@@ -425,7 +430,7 @@ impl App {
     }
 
     fn render_main_screen(area: Rect, buf: &mut Buffer, state: &mut MainScreenState, app_data: &data::Data) {
-        let title = Line::from(" todo ".bold());
+        let title = Line::from(" Scribe ".bold());
         let instructions = Line::from(" ^S Search | ↑↓ Navigate | ↵ Open | ^X Quit ");
 
         let block = Block::bordered()
