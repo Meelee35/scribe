@@ -425,7 +425,7 @@ impl App {
     }
 
     fn render_main_screen(area: Rect, buf: &mut Buffer, state: &mut MainScreenState, app_data: &data::Data) {
-        let title = Line::from(" Scribe ".bold());
+        let title = Line::from(" todo ".bold());
         let instructions = Line::from(" ^S Search | ↑↓ Navigate | ↵ Open | ^X Quit ");
 
         let block = Block::bordered()
@@ -461,7 +461,7 @@ impl App {
         let [mut todo_list_area, todo_input_area] = Layout::vertical([
             Constraint::Fill(1),
             Constraint::Length(3),
-        ]).areas(right);
+        ]).spacing(Spacing::Overlap(1)).areas(right);
 
         let mut note_pane_title = Line::from(format!(" {} ", state.name));
         let mut todo_pane_title = Line::from(" Todo ");
